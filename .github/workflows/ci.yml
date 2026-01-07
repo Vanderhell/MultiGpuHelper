@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.x'
+
+    - name: Display .NET version
+      run: dotnet --info
+
+    - name: Restore dependencies
+      run: dotnet restore
+
+    - name: Build solution
+      run: dotnet build --configuration Release --no-restore
+
+    - name: Run tests
+      run: |
+        if (Test-Path "tests/MultiGpuHelper.Tests") {
+          dotnet test tests/MultiGpuHelper.Tests/ --configuration Release --no-build --verbosity normal
+        } else {
+          Write-Host "Tests directory not found, skipping tests"
+        }
+      shell: pwsh
+
+    - name: Pack NuGet package
+      run: dotnet pack src/MultiGpuHelper/MultiGpuHelper.csproj --configuration Release --output ./artifacts
+
+    - name: Upload NuGet package artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: nuget-packages
+        path: |
+          ./artifacts/*.nupkg
+          ./artifacts/*.snupkg
+        if-no-files-found: warn
