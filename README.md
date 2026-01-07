@@ -23,7 +23,7 @@ dotnet add package MultiGpuHelper
 ### From Source
 
 ```bash
-git clone https://github.com/yourname/MultiGpuHelper.git
+git clone https://github.com/Vanderhell/MultiGpuHelper.git
 cd MultiGpuHelper
 dotnet build
 ```
