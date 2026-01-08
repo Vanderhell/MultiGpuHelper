@@ -3,7 +3,7 @@
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
     <PackageId>MultiGpuHelper</PackageId>
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <Authors>Peter</Authors>
     <Company>MultiGpuHelper</Company>
     <Description>Helper library for scheduling compute jobs across multiple GPUs (AI / render / hobby servers).</Description>
@@ -27,7 +27,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Include="../../README.md" Pack="true" PackagePath="\" />
+    <None Include="NUGET_README.md" Pack="true" PackagePath="README.md" />
   </ItemGroup>
 
 </Project>
