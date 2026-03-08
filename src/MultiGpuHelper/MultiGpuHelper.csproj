@@ -3,10 +3,10 @@
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
     <PackageId>MultiGpuHelper</PackageId>
-    <Version>1.0.1</Version>
+    <Version>1.1.0</Version>
     <Authors>Peter</Authors>
     <Company>MultiGpuHelper</Company>
-    <Description>Helper library for scheduling compute jobs across multiple GPUs (AI / render / hobby servers).</Description>
+    <Description>Lightweight open-source .NET helper for transparent GPU selection across backends (NVIDIA CUDA, extensible to AMD/Intel).</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/Vanderhell/MultiGpuHelper</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
@@ -21,13 +21,17 @@
     <NoWarn>$(NoWarn);1591</NoWarn>
     <LangVersion>latest</LangVersion>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageTags>gpu;cuda;ai;inference;multi-gpu;scheduler</PackageTags>
+    <PackageTags>gpu;cuda;multi-gpu;vram;device-selection</PackageTags>
     <SignAssembly>true</SignAssembly>
     <AssemblyOriginatorKeyFile>../../MultiGpuHelper.snk</AssemblyOriginatorKeyFile>
   </PropertyGroup>
 
   <ItemGroup>
     <None Include="NUGET_README.md" Pack="true" PackagePath="README.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Management" Version="6.0.0" />
   </ItemGroup>
 
 </Project>
