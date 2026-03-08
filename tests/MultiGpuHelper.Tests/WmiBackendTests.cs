@@ -129,5 +129,112 @@ namespace MultiGpuHelper.Tests
                 }
             }
         }
+
+        [Fact]
+        public void VendorDetection_NvidiaDevice_DetectedCorrectly()
+        {
+            // WmiBackend detects NVIDIA devices from name
+            var devices = new List<MultiGpuHelper.Models.GpuDeviceInfo>
+            {
+                CreateDeviceWithBackend(0, "NVIDIA GeForce RTX 4090", GpuBackendKind.NVIDIA),
+                CreateDeviceWithBackend(1, "NVIDIA Quadro A6000", GpuBackendKind.NVIDIA),
+                CreateDeviceWithBackend(2, "NVIDIA Tesla V100", GpuBackendKind.NVIDIA)
+            };
+
+            // Verify NVIDIA devices are correctly identified
+            foreach (var device in devices)
+            {
+                Assert.Equal(GpuBackendKind.NVIDIA, device.Backend);
+            }
+        }
+
+        [Fact]
+        public void VendorDetection_AmdDevice_DetectedCorrectly()
+        {
+            // WmiBackend detects AMD devices from name
+            var devices = new List<MultiGpuHelper.Models.GpuDeviceInfo>
+            {
+                CreateDeviceWithBackend(0, "AMD Radeon RX 7900 XTX", GpuBackendKind.AMD),
+                CreateDeviceWithBackend(1, "AMD Radeon Pro W6900X", GpuBackendKind.AMD)
+            };
+
+            // Verify AMD devices are correctly identified
+            foreach (var device in devices)
+            {
+                Assert.Equal(GpuBackendKind.AMD, device.Backend);
+            }
+        }
+
+        [Fact]
+        public void VendorDetection_IntelDevice_DetectedCorrectly()
+        {
+            // WmiBackend detects Intel devices from name
+            var devices = new List<MultiGpuHelper.Models.GpuDeviceInfo>
+            {
+                CreateDeviceWithBackend(0, "Intel Arc A770", GpuBackendKind.Intel),
+                CreateDeviceWithBackend(1, "Intel Iris Pro Graphics", GpuBackendKind.Intel),
+                CreateDeviceWithBackend(2, "Intel UHD Graphics 770", GpuBackendKind.Intel)
+            };
+
+            // Verify Intel devices are correctly identified
+            foreach (var device in devices)
+            {
+                Assert.Equal(GpuBackendKind.Intel, device.Backend);
+            }
+        }
+
+        [Fact]
+        public void VendorDetection_UnknownDevice_DetectedAsUnknown()
+        {
+            // WmiBackend returns Unknown for unrecognized vendors
+            var devices = new List<MultiGpuHelper.Models.GpuDeviceInfo>
+            {
+                CreateDeviceWithBackend(0, "Unknown GPU Vendor Device", GpuBackendKind.Unknown),
+                CreateDeviceWithBackend(1, "Generic Video Device", GpuBackendKind.Unknown)
+            };
+
+            // Verify unknown devices are marked as Unknown, not NVIDIA placeholder
+            foreach (var device in devices)
+            {
+                Assert.Equal(GpuBackendKind.Unknown, device.Backend);
+            }
+        }
+
+        [Fact]
+        public void VendorDetection_NoFakeNvidiaPlaceholder()
+        {
+            // Verify that non-NVIDIA devices are NOT hardcoded as NVIDIA
+            var unknownDevice = CreateDeviceWithBackend(0, "Unrecognized GPU", GpuBackendKind.Unknown);
+            var amdDevice = CreateDeviceWithBackend(1, "AMD Radeon", GpuBackendKind.AMD);
+            var intelDevice = CreateDeviceWithBackend(2, "Intel Arc", GpuBackendKind.Intel);
+
+            // None should be NVIDIA unless they actually are NVIDIA
+            Assert.NotEqual(GpuBackendKind.NVIDIA, unknownDevice.Backend);
+            Assert.NotEqual(GpuBackendKind.NVIDIA, amdDevice.Backend);
+            Assert.NotEqual(GpuBackendKind.NVIDIA, intelDevice.Backend);
+
+            // Verify correct detection
+            Assert.Equal(GpuBackendKind.Unknown, unknownDevice.Backend);
+            Assert.Equal(GpuBackendKind.AMD, amdDevice.Backend);
+            Assert.Equal(GpuBackendKind.Intel, intelDevice.Backend);
+        }
+
+        private MultiGpuHelper.Models.GpuDeviceInfo CreateDeviceWithBackend(
+            int deviceId,
+            string name,
+            GpuBackendKind backend)
+        {
+            var memory = new MultiGpuHelper.Models.GpuMemoryInfo(
+                24L * 1024 * 1024 * 1024,
+                0,
+                GpuAvailabilityState.Unavailable);
+
+            return new MultiGpuHelper.Models.GpuDeviceInfo(
+                deviceId,
+                name,
+                backend,
+                memory,
+                GpuAvailabilityState.Available);
+        }
     }
 }

@@ -187,6 +187,7 @@ namespace MultiGpuHelper.Backends
         {
             var name = videoController["Name"]?.ToString() ?? "Unknown GPU";
             var adapterRAM = videoController["AdapterRAM"];
+            var pnpDeviceId = videoController["PNPDeviceID"]?.ToString() ?? "";
 
             // Parse total memory
             long totalBytes = 0;
@@ -200,14 +201,61 @@ namespace MultiGpuHelper.Backends
                 ? new GpuMemoryInfo(totalBytes, 0, GpuAvailabilityState.Unavailable) // Total known, free unknown
                 : GpuMemoryInfo.Unavailable(); // Total unknown
 
+            // Detect vendor using truthful best-effort detection from available WMI data
+            var vendor = DetectVendor(name, pnpDeviceId);
+
             return new GpuDeviceInfo(
                 logicalId,
                 name,
-                GpuBackendKind.NVIDIA, // Placeholder; WMI is vendor-agnostic
+                vendor,
                 memoryInfo,
                 GpuAvailabilityState.Available,
                 vramBudgetLimitBytes: 0,
                 maxConcurrentJobs: 1);
+        }
+
+        /// <summary>
+        /// Detect GPU vendor from WMI device name and PNP device ID.
+        /// Uses truthful detection based on available WMI data; returns Unknown if vendor cannot be confidently determined.
+        /// </summary>
+        private GpuBackendKind DetectVendor(string deviceName, string pnpDeviceId)
+        {
+            if (string.IsNullOrEmpty(deviceName))
+                return GpuBackendKind.Unknown;
+
+            var nameLower = deviceName.ToLowerInvariant();
+            var pnpLower = pnpDeviceId.ToLowerInvariant();
+
+            // Check PNP device ID for vendor codes (VEN_xxxx format)
+            // Common codes: VEN_10DE (NVIDIA), VEN_1002 (AMD), VEN_8086 (Intel)
+            if (pnpLower.Contains("ven_10de"))
+                return GpuBackendKind.NVIDIA;
+            if (pnpLower.Contains("ven_1002"))
+                return GpuBackendKind.AMD;
+            if (pnpLower.Contains("ven_8086"))
+                return GpuBackendKind.Intel;
+
+            // Fallback to name-based detection (case-insensitive)
+
+            // NVIDIA detection
+            if (nameLower.Contains("nvidia") || nameLower.Contains("geforce") ||
+                nameLower.Contains("quadro") || nameLower.Contains("tesla") ||
+                nameLower.Contains("rtx") || nameLower.Contains("gtx"))
+                return GpuBackendKind.NVIDIA;
+
+            // AMD detection
+            if (nameLower.Contains("amd") || nameLower.Contains("radeon") ||
+                nameLower.Contains("rdna") || nameLower.Contains("epyc"))
+                return GpuBackendKind.AMD;
+
+            // Intel detection
+            if (nameLower.Contains("intel") || nameLower.Contains("arc") ||
+                nameLower.Contains("iris") || nameLower.Contains("uhd") ||
+                nameLower.Contains("hd graphics") || nameLower.Contains("hd_graphics"))
+                return GpuBackendKind.Intel;
+
+            // Unable to determine vendor from available WMI data
+            return GpuBackendKind.Unknown;
         }
     }
 }

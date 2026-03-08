@@ -135,15 +135,19 @@ var memoryInfo = totalBytes > 0
     : GpuMemoryInfo.Unavailable();
 ```
 
-### Design Decision: Placeholder for Vendor Identity
+### Vendor Detection Implementation (Corrected in EXEC_MGH_1_1_0_16)
 
-Current implementation sets all backends to `GpuBackendKind.NVIDIA` because:
-1. Separate vendor enum doesn't exist yet
-2. Device names are accurate (e.g., "AMD Radeon", "Intel Arc")
-3. Will be fixed in v1.2+ when separate vendor enum added
-4. Not a data integrity issue; names are correct
+**Previous approach** (1.1.0.1): Hardcoded all devices as NVIDIA (false placeholder)
+- **Problem**: Completely inaccurate vendor identification
+- **Reason for placeholder**: Separate vendor enum didn't exist yet
 
-**Not Ideal**: This is a limitation documented in release notes, not a data lie.
+**Current approach** (1.1.0.2+): Best-effort vendor detection
+1. Check PNP device ID for vendor codes (VEN_10DE=NVIDIA, VEN_1002=AMD, VEN_8086=Intel)
+2. Check device name for vendor patterns (case-insensitive)
+3. Return `Unknown` if vendor cannot be determined (not false NVIDIA)
+4. Device names are accurate regardless (e.g., "AMD Radeon", "Intel Arc")
+
+**Result**: Truthful vendor identification for known vendors, `Unknown` for unidentified devices
 
 ---
 
@@ -255,10 +259,13 @@ All 63 tests pass:
    - Workaround: Use FirstAvailable or ExplicitId with WMI
    - Will improve in v1.2+ if DXGI API integration added
 
-2. **Vendor Identity Placeholder**
-   - Impact: All WMI devices reported as "NVIDIA" (enum value)
-   - Mitigation: Device names are accurate ("AMD Radeon", "Intel Arc", etc.)
-   - Non-breaking; will fix in v1.2+ with separate vendor enum
+2. **Vendor Identity Detection** (FIXED in EXEC_MGH_1_1_0_16)
+   - Previous issue: All WMI devices reported as "NVIDIA" (false placeholder)
+   - Current implementation: Best-effort vendor detection from WMI data
+   - Detection sources: PNP device ID (VEN_xxxx codes), device name patterns
+   - Returns: NVIDIA, AMD, Intel, or Unknown (not false NVIDIA)
+   - Device names also accurate: "AMD Radeon", "Intel Arc", etc.
+   - Non-breaking: Existing code continues to work; metadata now truthful
 
 3. **Adapter RAM May Be Zero**
    - Some drivers don't report AdapterRAM via WMI

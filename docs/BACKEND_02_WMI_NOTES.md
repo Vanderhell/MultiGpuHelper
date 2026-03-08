@@ -154,10 +154,12 @@ When WMI devices are passed to `GpuSelectionEngine.SelectDevice()`:
    - `MostFreeMemory` policy falls back to `FirstAvailable` for pure WMI device lists
    - Mitigation: Use NVIDIA backend if free memory selection is critical; use FirstAvailable or ExplicitId with WMI
 
-2. **Vendor Identity Placeholder**
-   - All WMI devices reported as `GpuBackendKind.NVIDIA` (placeholder)
-   - Will be fixed when separate vendor enum is added
-   - Impact: Cannot distinguish AMD/Intel from NVIDIA in returned data (but device names are accurate)
+2. **Vendor Identity Detection**
+   - WMI devices vendor detected from adapter name and PNP device ID
+   - Detection rules: PNP vendor codes (VEN_10DE, VEN_1002, VEN_8086), name patterns
+   - Returns `Unknown` if vendor cannot be confidently determined (not a false NVIDIA placeholder)
+   - Supported vendors: NVIDIA, AMD, Intel, Unknown
+   - Device names remain accurate (e.g., "AMD Radeon", "Intel Arc")
 
 3. **Windows-Only**
    - WMI backend is non-functional on Linux/macOS
