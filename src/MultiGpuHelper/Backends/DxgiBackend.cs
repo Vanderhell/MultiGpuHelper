@@ -1,7 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Management;
 using System.Threading.Tasks;
 using MultiGpuHelper.Abstractions;
 using MultiGpuHelper.Enums;
@@ -11,203 +9,42 @@ using MultiGpuHelper.Models;
 namespace MultiGpuHelper.Backends
 {
     /// <summary>
-    /// DXGI GPU backend implementation for Windows.
-    /// Detects GPUs via Windows Management Instrumentation (WMI) querying DXGI-compatible adapters.
-    /// Available on Windows 7+ with WMI support; returns empty list on unsupported platforms.
+    /// OBSOLETE: This class is provided for backward compatibility only.
+    /// DxgiBackend was renamed to WmiBackend because the implementation uses WMI (Windows Management Instrumentation),
+    /// not actual DXGI APIs.
+    ///
+    /// Use WmiBackend instead. This wrapper will be removed in a future version.
+    ///
+    /// Historical context:
+    /// - Version 1.1.0.1: Initial implementation incorrectly named "DxgiBackend"
+    /// - Implementation: WMI-based GPU enumeration via Win32_VideoController queries
+    /// - Truthfulness fix: Renamed to WmiBackend to accurately describe the technology used
     /// </summary>
+    [Obsolete("Use WmiBackend instead. DxgiBackend was renamed because it uses WMI, not DXGI APIs. This wrapper will be removed in v1.2.0.", false)]
     public class DxgiBackend : IGpuBackend
     {
-        private readonly IGpuLogger _logger;
+        private readonly WmiBackend _inner;
 
-        public GpuBackendKind BackendKind => GpuBackendKind.NVIDIA; // Use NVIDIA as placeholder; DXGI is vendor-agnostic
+        public GpuBackendKind BackendKind => _inner.BackendKind;
 
         public DxgiBackend(IGpuLogger logger = null)
         {
-            _logger = logger ?? new NoOpLogger();
+            _inner = new WmiBackend(logger);
         }
 
-        /// <summary>
-        /// Detect available GPUs via WMI (Windows Management Instrumentation).
-        /// Queries Win32_VideoController for GPU adapters with DXGI support.
-        /// Returns empty list if WMI is unavailable or no GPUs found.
-        /// </summary>
-        public async Task<IReadOnlyList<GpuDeviceInfo>> DetectDevicesAsync()
+        public Task<IReadOnlyList<GpuDeviceInfo>> DetectDevicesAsync()
         {
-            try
-            {
-                var available = await IsAvailableAsync().ConfigureAwait(false);
-                if (!available)
-                {
-                    _logger.Debug("DXGI backend not available (WMI or GPU adapters not found)");
-                    return new List<GpuDeviceInfo>();
-                }
-
-                var devices = QueryGpuAdapters();
-
-                if (devices.Count == 0)
-                {
-                    _logger.Debug("DXGI: No GPU adapters found via WMI");
-                    return new List<GpuDeviceInfo>();
-                }
-
-                _logger.Debug($"DXGI: Detected {devices.Count} GPU adapter(s)");
-                return devices;
-            }
-            catch (Exception ex)
-            {
-                _logger.Warn($"DXGI backend detection failed: {ex.Message}");
-                return new List<GpuDeviceInfo>();
-            }
+            return _inner.DetectDevicesAsync();
         }
 
-        /// <summary>
-        /// Refresh VRAM information for detected devices.
-        /// Re-queries WMI and updates memory info.
-        /// </summary>
-        public async Task<IReadOnlyList<GpuDeviceInfo>> RefreshMemoryAsync(IReadOnlyList<GpuDeviceInfo> devices)
+        public Task<IReadOnlyList<GpuDeviceInfo>> RefreshMemoryAsync(IReadOnlyList<GpuDeviceInfo> devices)
         {
-            try
-            {
-                var latest = await DetectDevicesAsync().ConfigureAwait(false);
-
-                // Map old device IDs to updated memory info
-                var result = new List<GpuDeviceInfo>();
-                foreach (var device in devices)
-                {
-                    var updated = latest.FirstOrDefault(d => d.DeviceId == device.DeviceId);
-                    if (updated != null)
-                    {
-                        // Replace old device with updated version
-                        result.Add(updated);
-                    }
-                    else
-                    {
-                        // Device not found; mark with error state
-                        var staleMemory = new GpuMemoryInfo(
-                            device.MemoryInfo.TotalBytes,
-                            device.MemoryInfo.FreeBytes,
-                            GpuAvailabilityState.Error);
-
-                        var staleDevice = new GpuDeviceInfo(
-                            device.DeviceId,
-                            device.DeviceName,
-                            device.Backend,
-                            staleMemory,
-                            GpuAvailabilityState.Unavailable,
-                            device.VramBudgetLimitBytes,
-                            device.MaxConcurrentJobs);
-
-                        result.Add(staleDevice);
-                    }
-                }
-
-                _logger.Debug("DXGI backend memory refreshed");
-                return result;
-            }
-            catch (Exception ex)
-            {
-                _logger.Warn($"DXGI backend refresh failed: {ex.Message}");
-                return devices.Select(d => new GpuDeviceInfo(
-                    d.DeviceId,
-                    d.DeviceName,
-                    d.Backend,
-                    GpuMemoryInfo.Error(),
-                    GpuAvailabilityState.Error,
-                    d.VramBudgetLimitBytes,
-                    d.MaxConcurrentJobs)).ToList();
-            }
+            return _inner.RefreshMemoryAsync(devices);
         }
 
-        /// <summary>
-        /// Check if DXGI backend (WMI GPU adapter query) is available on this system.
-        /// </summary>
-        public async Task<bool> IsAvailableAsync()
+        public Task<bool> IsAvailableAsync()
         {
-            return await Task.Run(() =>
-            {
-                try
-                {
-                    // Try to query WMI for GPU adapters
-                    using (var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_VideoController"))
-                    {
-                        var collection = searcher.Get();
-                        return collection.Count > 0;
-                    }
-                }
-                catch
-                {
-                    return false;
-                }
-            }).ConfigureAwait(false);
-        }
-
-        private List<GpuDeviceInfo> QueryGpuAdapters()
-        {
-            var devices = new List<GpuDeviceInfo>();
-            var deviceId = 0;
-
-            try
-            {
-                using (var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_VideoController"))
-                {
-                    var collection = searcher.Get();
-
-                    // Order by device name for deterministic results
-                    var orderedResults = collection.Cast<ManagementObject>()
-                        .OrderBy(mo => mo["Name"]?.ToString() ?? "")
-                        .ToList();
-
-                    foreach (var videoController in orderedResults)
-                    {
-                        try
-                        {
-                            var device = ParseVideoController(videoController, deviceId);
-                            if (device != null)
-                            {
-                                devices.Add(device);
-                                deviceId++;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.Warn($"Failed to parse video controller: {ex.Message}");
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.Warn($"WMI query failed: {ex.Message}");
-            }
-
-            return devices;
-        }
-
-        private GpuDeviceInfo ParseVideoController(ManagementObject videoController, int logicalId)
-        {
-            var name = videoController["Name"]?.ToString() ?? "Unknown GPU";
-            var adapterRAM = videoController["AdapterRAM"];
-
-            // Parse total memory
-            long totalBytes = 0;
-            if (adapterRAM != null && long.TryParse(adapterRAM.ToString(), out var ramBytes))
-            {
-                totalBytes = ramBytes;
-            }
-
-            // Free memory is not reliably available from WMI; mark as unknown
-            var memoryInfo = totalBytes > 0
-                ? new GpuMemoryInfo(totalBytes, 0, GpuAvailabilityState.Unavailable) // Total known, free unknown
-                : GpuMemoryInfo.Unavailable(); // Total unknown
-
-            return new GpuDeviceInfo(
-                logicalId,
-                name,
-                GpuBackendKind.NVIDIA, // Placeholder; DXGI is vendor-agnostic
-                memoryInfo,
-                GpuAvailabilityState.Available,
-                vramBudgetLimitBytes: 0,
-                maxConcurrentJobs: 1);
+            return _inner.IsAvailableAsync();
         }
     }
 }

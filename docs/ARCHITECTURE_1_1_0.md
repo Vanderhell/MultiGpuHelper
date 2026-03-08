@@ -109,12 +109,14 @@ These are newly introduced immutable types recommended for new code:
    - Gracefully handles missing nvidia-smi
    - Public in 1.1.0 for detection use cases
 
-9. **DxgiBackend** (concrete implementation, v1.1.0.1+)
-   - Windows GPU detection via WMI (DXGI adapters)
+9. **WmiBackend** (concrete implementation, v1.1.0.1+)
+   - Windows GPU detection via WMI (Windows Management Instrumentation)
+   - Queries `Win32_VideoController` for system GPU adapters
    - Returns `IReadOnlyList<GpuDeviceInfo>`
    - Gracefully handles non-Windows platforms
    - Strictly opt-in; no changes to default behavior
    - Free memory unknown; Total memory when available
+   - Note: Earlier versions used name "DxgiBackend"; renamed to "WmiBackend" in EXEC_MGH_1_1_0_15 for truthful naming
 
 ### What Is Internal (Subject to Change)
 

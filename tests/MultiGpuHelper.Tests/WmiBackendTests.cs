@@ -9,47 +9,34 @@ using MultiGpuHelper.Logging;
 
 namespace MultiGpuHelper.Tests
 {
-    /// <summary>
-    /// Tests for the obsolete DxgiBackend wrapper.
-    /// DxgiBackend was renamed to WmiBackend in the truthfulness cleanup (EXEC_MGH_1_1_0_15).
-    /// These tests verify that the obsolete wrapper still works for backward compatibility.
-    /// </summary>
-    public class DxgiBackendTests
+    public class WmiBackendTests
     {
-        private readonly DxgiBackend _backend;
+        private readonly WmiBackend _backend;
 
-        public DxgiBackendTests()
+        public WmiBackendTests()
         {
-#pragma warning disable CS0618 // Type is obsolete
-            _backend = new DxgiBackend(new NoOpLogger());
-#pragma warning restore CS0618
+            _backend = new WmiBackend(new NoOpLogger());
         }
 
         [Fact]
         public void BackendKind_ReturnsNvidia()
         {
-            // Obsolete wrapper delegates to WmiBackend
-#pragma warning disable CS0618
+            // WMI backend uses NVIDIA as placeholder vendor until separate vendor enum exists
             Assert.Equal(MultiGpuHelper.Enums.GpuBackendKind.NVIDIA, _backend.BackendKind);
-#pragma warning restore CS0618
         }
 
         [Fact]
         public async Task IsAvailableAsync_ReturnsBool()
         {
             // Should return bool without exception
-#pragma warning disable CS0618
             var available = await _backend.IsAvailableAsync();
-#pragma warning restore CS0618
             Assert.IsType<bool>(available);
         }
 
         [Fact]
         public async Task DetectDevicesAsync_ReturnsReadOnlyList()
         {
-#pragma warning disable CS0618
             var devices = await _backend.DetectDevicesAsync();
-#pragma warning restore CS0618
 
             Assert.NotNull(devices);
             Assert.IsAssignableFrom<IReadOnlyList<MultiGpuHelper.Models.GpuDeviceInfo>>(devices);
@@ -59,9 +46,7 @@ namespace MultiGpuHelper.Tests
         public async Task DetectDevicesAsync_NoDevices_ReturnsEmptyList()
         {
             // If no GPUs available, returns empty (not null)
-#pragma warning disable CS0618
             var devices = await _backend.DetectDevicesAsync();
-#pragma warning restore CS0618
 
             Assert.NotNull(devices);
             Assert.IsType<List<MultiGpuHelper.Models.GpuDeviceInfo>>(devices);
@@ -70,9 +55,7 @@ namespace MultiGpuHelper.Tests
         [Fact]
         public async Task DetectDevicesAsync_DevicesHaveRequiredFields()
         {
-#pragma warning disable CS0618
             var devices = await _backend.DetectDevicesAsync();
-#pragma warning restore CS0618
 
             if (devices.Count > 0)
             {
@@ -98,9 +81,7 @@ namespace MultiGpuHelper.Tests
         [Fact]
         public async Task DetectDevicesAsync_ReturnsOrderedByDeviceId()
         {
-#pragma warning disable CS0618
             var devices = await _backend.DetectDevicesAsync();
-#pragma warning restore CS0618
 
             if (devices.Count > 1)
             {
@@ -118,9 +99,7 @@ namespace MultiGpuHelper.Tests
         {
             var devices = new List<MultiGpuHelper.Models.GpuDeviceInfo>();
 
-#pragma warning disable CS0618
             var refreshed = await _backend.RefreshMemoryAsync(devices);
-#pragma warning restore CS0618
 
             Assert.NotNull(refreshed);
             Assert.Empty(refreshed);
@@ -130,16 +109,12 @@ namespace MultiGpuHelper.Tests
         public async Task RefreshMemoryAsync_WithDeviceList_ReturnsUpdatedList()
         {
             // First detect devices
-#pragma warning disable CS0618
             var originalDevices = await _backend.DetectDevicesAsync();
-#pragma warning restore CS0618
 
             if (originalDevices.Count > 0)
             {
                 // Refresh should return updated list
-#pragma warning disable CS0618
                 var refreshed = await _backend.RefreshMemoryAsync(originalDevices);
-#pragma warning restore CS0618
 
                 Assert.NotNull(refreshed);
                 Assert.Equal(originalDevices.Count, refreshed.Count);

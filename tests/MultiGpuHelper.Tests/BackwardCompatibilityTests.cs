@@ -193,14 +193,26 @@ namespace MultiGpuHelper.Tests
         }
 
         [Fact]
-        public void DxgiBackend_IsPublic_ButOptional()
+        public void WmiBackend_IsPublic_ButOptional()
         {
-            // New 1.1.0: DXGI backend is available but completely optional
+            // New 1.1.0.1: WMI backend is available but completely optional
             // Legacy code does NOT use it automatically
-            var backend = new MultiGpuHelper.Backends.DxgiBackend(new NoOpLogger());
+            var backend = new MultiGpuHelper.Backends.WmiBackend(new NoOpLogger());
 
             Assert.NotNull(backend);
             // Verify it exists but is NOT injected into legacy paths
+        }
+
+        [Fact]
+        public void DxgiBackend_IsObsolete_ButBackwardCompatible()
+        {
+            // DxgiBackend was renamed to WmiBackend in truthfulness cleanup
+            // Old code using DxgiBackend still works via obsolete wrapper
+#pragma warning disable CS0618 // Type is obsolete
+            var backend = new MultiGpuHelper.Backends.DxgiBackend(new NoOpLogger());
+
+            Assert.NotNull(backend);
+#pragma warning restore CS0618
         }
 
         [Fact]
