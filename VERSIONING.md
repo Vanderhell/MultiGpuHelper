@@ -2,9 +2,18 @@
 
 MultiGpuHelper uses semantic versions. The current version is `1.1.0` and its tag is `v1.1.0`.
 
-Pull requests and pushes to the default `main` branch run restore, Release build, tests, and package creation. A `v*` tag runs the same gates and uploads `.nupkg` and `.snupkg` files as workflow artifacts.
+Pull requests and pushes to the default `main` branch run restore, Release build, and tests through `ci.yml`. That workflow has no package-publishing permission.
 
-The workflow does not publish to NuGet. Publishing requires a separate, explicit maintainer action after inspecting the tag artifacts. No API key belongs in this repository.
+Publishing is isolated in `release.yml`. It runs only for a published GitHub Release or an explicit manual invocation referencing an existing stable version tag. The release job rebuilds and tests the tagged source, creates `.nupkg` and `.snupkg` artifacts, and uses NuGet Trusted Publishing to obtain a short-lived credential through GitHub OIDC. No long-lived NuGet API key belongs in this repository.
+
+The nuget.org Trusted Publishing policy must match:
+
+- Repository owner: `Vanderhell`
+- Repository: `MultiGpuHelper`
+- Workflow file: `release.yml`
+- GitHub environment: `release`
+
+The GitHub `release` environment must define the `NUGET_USER` secret containing the nuget.org profile name, not an email address. Environment approval rules are recommended.
 
 Release preparation:
 
@@ -13,4 +22,5 @@ Release preparation:
 3. Install the local package into a clean sample and compile the README quick start.
 4. Push reviewed code to `main`.
 5. Create and push `v1.1.0` only after the commit is approved for release.
-6. Download and inspect CI package artifacts before any manual NuGet upload.
+6. Publish a GitHub Release for that tag, or manually run `release.yml` with the tag.
+7. Approve the protected `release` environment, if configured; the workflow then builds, tests, packs, and publishes through Trusted Publishing.

@@ -1,0 +1,99 @@
+name: NuGet Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to publish, for example v1.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build, verify, and publish
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Expected a stable semantic-version tag such as v1.1.0; received '$RELEASE_TAG'." >&2
+            exit 1
+          fi
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Verify tag and project version
+        shell: pwsh
+        run: |
+          $project = [xml](Get-Content -Raw 'src/MultiGpuHelper/MultiGpuHelper.csproj')
+          $projectVersion = [string]$project.Project.PropertyGroup.Version
+          $expectedVersion = '${{ steps.release.outputs.version }}'
+          if ($projectVersion -ne $expectedVersion) {
+            throw "Tag version $expectedVersion does not match project version $projectVersion."
+          }
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'
+
+      - name: Restore dependencies
+        run: dotnet restore MultiGpuHelper.sln
+
+      - name: Build solution
+        run: dotnet build MultiGpuHelper.sln --configuration Release --no-restore
+
+      - name: Run tests
+        run: dotnet test tests/MultiGpuHelper.Tests/MultiGpuHelper.Tests.csproj --configuration Release --no-build --no-restore
+
+      - name: Pack NuGet packages
+        run: dotnet pack src/MultiGpuHelper/MultiGpuHelper.csproj --configuration Release --no-build --no-restore --output artifacts
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: MultiGpuHelper-${{ steps.release.outputs.version }}
+          path: |
+            artifacts/*.nupkg
+            artifacts/*.snupkg
+          if-no-files-found: error
+
+      - name: NuGet login with Trusted Publishing
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Publish to NuGet.org
+        shell: pwsh
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: |
+          $packages = Get-ChildItem -Path 'artifacts' -Filter '*.nupkg' -File
+          if ($packages.Count -ne 1) {
+            throw "Expected exactly one .nupkg file; found $($packages.Count)."
+          }
+          dotnet nuget push $packages[0].FullName `
+            --api-key $env:NUGET_API_KEY `
+            --source 'https://api.nuget.org/v3/index.json' `
+            --skip-duplicate

@@ -3,9 +3,11 @@ name: CI
 on:
   push:
     branches: [ main ]
-    tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -32,22 +34,4 @@ jobs:
       run: dotnet build --configuration Release --no-restore
 
     - name: Run tests
-      run: |
-        if (Test-Path "tests/MultiGpuHelper.Tests") {
-          dotnet test tests/MultiGpuHelper.Tests/ --configuration Release --no-build --verbosity normal
-        } else {
-          Write-Host "Tests directory not found, skipping tests"
-        }
-      shell: pwsh
-
-    - name: Pack NuGet package
-      run: dotnet pack src/MultiGpuHelper/MultiGpuHelper.csproj --configuration Release --no-build --output ./artifacts
-
-    - name: Upload NuGet package artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: nuget-packages
-        path: |
-          ./artifacts/*.nupkg
-          ./artifacts/*.snupkg
-        if-no-files-found: error
+      run: dotnet test tests/MultiGpuHelper.Tests/MultiGpuHelper.Tests.csproj --configuration Release --no-build --no-restore --verbosity normal
