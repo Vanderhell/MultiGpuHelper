@@ -1,335 +1,95 @@
 # MultiGpuHelper
 
-A production-ready C# library for scheduling compute jobs across multiple GPUs. Designed for hobby projects involving AI inference, rendering, or other GPU-accelerated workloads.
+MultiGpuHelper is a .NET Standard 2.0 library for discovering GPU adapters, selecting a device, and limiting concurrent GPU work. Discovery is best-effort: each backend reports only data available from its underlying operating-system, command-line, or driver API.
 
-## Features
+## What it does
 
-- **Multi-GPU Support**: Distribute work across NVIDIA GPUs (and extensible to other vendors)
-- **Device Discovery**: Automatic GPU detection via `nvidia-smi` with graceful fallback
-- **Selection Policies**: Round-robin, most-available-VRAM, or explicit device targeting
-- **VRAM Budgeting**: Soft-reservation system with per-device limits
-- **Concurrency Control**: Per-GPU semaphores to limit parallel job execution
-- **Async-First**: Built on async/await for responsive applications
-- **Cross-Platform**: Targets .NET Standard 2.0 for .NET Framework and .NET Core/.NET compatibility
+- Discovers devices through `nvidia-smi`, the CUDA Driver API, ROCm `rocminfo`, or Windows WMI.
+- Represents discovery results as immutable `GpuDeviceInfo` snapshots.
+- Selects devices using first-available, most-free-memory, round-robin, or specific-device policies.
+- Dispatches callbacks with per-device concurrency limits and soft VRAM reservations.
+
+## What it does not do
+
+The library does not execute CUDA, ROCm, DirectX, or machine-learning kernels. It does not allocate physical VRAM, guarantee that reported free memory remains current, or merge records from different discovery backends.
+
+## Supported platforms and backends
+
+| Backend | Mechanism | Platform requirement | Memory data |
+|---|---|---|---|
+| `NvidiaBackend` | `nvidia-smi` | NVIDIA tools on `PATH` | Total and free VRAM when the command reports both |
+| `CudaBackend` | CUDA Driver API | Windows NVIDIA driver | Total VRAM; free VRAM unknown |
+| `RocmBackend` | `rocminfo` | ROCm tools on `PATH` | Free VRAM unknown |
+| `WmiBackend` | `Win32_VideoController` | Windows with WMI | VRAM intentionally unknown |
+
+ROCm behavior has unit coverage but has not been maintainer-verified on AMD hardware. See [backend details](https://github.com/Vanderhell/MultiGpuHelper/blob/main/docs/BACKENDS.md).
 
 ## Installation
 
-### Via NuGet
-
 ```bash
-dotnet add package MultiGpuHelper
+dotnet add package MultiGpuHelper --version 1.1.0
 ```
 
-### From Source
-
-```bash
-git clone https://github.com/Vanderhell/MultiGpuHelper.git
-cd MultiGpuHelper
-dotnet build
-```
-
-## Quick Start
-
-### Auto-Detect GPUs
+## Quick start
 
 ```csharp
-using MultiGpuHelper.Management;
-using MultiGpuHelper.Dispatching;
+using MultiGpuHelper.Backends;
 using MultiGpuHelper.Models;
+using MultiGpuHelper.Selection;
 
-var manager = new GpuManager();
-await manager.InitializeFromProbeAsync(); // Detects GPUs via nvidia-smi
+var backend = new NvidiaBackend();
+var devices = await backend.DetectDevicesAsync();
+var selection = new GpuSelectionEngine().SelectDevice(
+    devices,
+    GpuPolicy.MostFreeMemory);
 
-var dispatcher = new GpuDispatcher(manager);
-
-// Run work on any available GPU
-var result = await dispatcher.RunAsync(
-    deviceId => {
-        Console.WriteLine($"Running on GPU {deviceId}");
-        return Task.FromResult(42);
-    },
-    GpuPolicy.RoundRobin
-);
+if (selection.IsSuccess)
+    Console.WriteLine($"Selected {selection.SelectedDevice.DeviceName}");
+else
+    Console.WriteLine(selection.Reason);
 ```
 
-### Manual Registration
+## Device discovery
 
-```csharp
-using MultiGpuHelper.Management;
-using MultiGpuHelper.Utilities;
+Backends implement `IGpuBackend`. An empty result means the backend was unavailable, failed, or detected no devices; use `IsAvailableAsync` when that distinction matters. `GpuDeviceInfo.Backend` identifies the discovery mechanism and `Vendor` identifies the hardware vendor.
 
-var builder = new GpuRegistrationBuilder();
-builder
-    .AddDevice(0, "NVIDIA RTX 4090", Size.GiB(24))
-    .ConfigureDevice(0, budgetBytes: Size.GiB(20), maxConcurrentJobs: 2)
-    .AddDevice(1, "NVIDIA RTX 4080", Size.GiB(16))
-    .ConfigureDevice(1, budgetBytes: Size.GiB(14), maxConcurrentJobs: 1);
+## Device selection
 
-var manager = builder.Build();
-var dispatcher = new GpuDispatcher(manager);
+`GpuSelectionEngine` accepts immutable discovery snapshots. `FirstAvailable`, `MostFreeMemory`, `RoundRobin`, and `SpecificDevice` have unique values and behavior. Unknown memory is represented by `GpuMemoryInfo.State`, not by treating zero as measured free VRAM.
 
-// Work items will be distributed according to policy
-```
+## Dispatching work
 
-## Selection Policies
+`GpuDispatcher` operates on mutable `GpuDevice` scheduling registrations managed by `GpuManager`. Its cancellation-aware overload accepts `Func<int, CancellationToken, Task<T>>`. `GpuWorkItem.TimeoutMs` covers waiting and callback execution, but callback cancellation is cooperative.
 
-- **RoundRobin**: Distributes work evenly across GPUs in sequence
-- **MostFreeVram**: Always selects the GPU with the most available memory
-- **SpecificDevice**: Routes work to a specific GPU by ID
+## Error handling
 
-## VRAM Budgeting
+Selection failures from `GpuManager` throw `GpuSelectionException`; budget rejection throws `GpuBudgetExceededException`; caller cancellation and timeouts surface as `OperationCanceledException`. Callback exceptions propagate unchanged. See [error handling](https://github.com/Vanderhell/MultiGpuHelper/blob/main/docs/ERROR-HANDLING.md).
 
-Set per-device VRAM limits:
+## Thread safety
 
-```csharp
-device.VramBudget.LimitBytes = Size.GiB(20);
+Concurrent manager selection and dispatcher calls are synchronized. Objects returned by `GpuManager.Devices` remain mutable; do not change device configuration while work is being dispatched. See [threading semantics](https://github.com/Vanderhell/MultiGpuHelper/blob/main/docs/THREADING.md).
 
-// Try to reserve VRAM
-if (!device.VramBudget.TryReserve(Size.MiB(500)))
-{
-    throw new GpuBudgetExceededException("Insufficient VRAM budget");
-}
+## Limitations
 
-// Automatically released when work completes
-```
+- Device IDs are backend-local ordinals, not persistent physical identifiers.
+- Results from multiple backends are not deduplicated.
+- WMI VRAM is unknown because `AdapterRAM` is not authoritative for modern adapters.
+- Soft VRAM reservations do not allocate or measure hardware memory.
+- Hardware-dependent discovery varies with installed tools, drivers, and permissions.
 
-## Advanced Usage
+## Documentation
 
-### Timeouts and Cancellation
+- [Quick start](https://github.com/Vanderhell/MultiGpuHelper/blob/main/docs/QUICKSTART.md)
+- [Cookbook](https://github.com/Vanderhell/MultiGpuHelper/blob/main/docs/COOKBOOK.md)
+- [Backends](https://github.com/Vanderhell/MultiGpuHelper/blob/main/docs/BACKENDS.md)
+- [Error handling](https://github.com/Vanderhell/MultiGpuHelper/blob/main/docs/ERROR-HANDLING.md)
+- [Threading](https://github.com/Vanderhell/MultiGpuHelper/blob/main/docs/THREADING.md)
+- [Troubleshooting](https://github.com/Vanderhell/MultiGpuHelper/blob/main/docs/TROUBLESHOOTING.md)
 
-```csharp
-var workItem = new GpuWorkItem
-{
-    TimeoutMs = 30000, // 30-second timeout
-    RequestedVramBytes = Size.MiB(512),
-    Tag = "ProcessingTask"
-};
+## Contributing / Issues
 
-await dispatcher.RunAsync(
-    async deviceId => { /* work */ },
-    GpuPolicy.MostFreeVram,
-    workItem,
-    cancellationToken
-);
-```
-
-### Custom Logging
-
-```csharp
-public class ConsoleLogger : IGpuLogger
-{
-    public void Debug(string message) => Console.WriteLine($"[DEBUG] {message}");
-    public void Info(string message) => Console.WriteLine($"[INFO] {message}");
-    public void Warn(string message) => Console.WriteLine($"[WARN] {message}");
-    public void Error(string message) => Console.WriteLine($"[ERROR] {message}");
-}
-
-var manager = new GpuManager(logger: new ConsoleLogger());
-```
-
-## API Overview
-
-### Core Types
-
-- `GpuDevice`: Represents a GPU device with VRAM and concurrency settings
-- `VramBudget`: Thread-safe VRAM reservation system
-- `GpuWorkItem`: Describes a unit of work with memory requirements and timeouts
-- `GpuPolicy`: Enum for device selection strategies
-- `GpuManager`: Manages device registry and selection logic
-- `GpuDispatcher`: Main interface for scheduling work on GPUs
-
-### Exceptions
-
-- `GpuSelectionException`: Thrown when device selection fails
-- `GpuProbeException`: Thrown when GPU detection fails
-- `GpuBudgetExceededException`: Thrown when VRAM budget is exceeded
-
-## Project Structure
-
-```
-MultiGpuHelper.sln
-├── src/
-│   └── MultiGpuHelper/              # Main library (netstandard2.0)
-│       ├── Models/                  # GpuDevice, VramBudget, etc.
-│       ├── Management/              # GpuManager, GpuRegistrationBuilder
-│       ├── Dispatching/             # GpuDispatcher
-│       ├── Probing/                 # GPU detection providers
-│       ├── Logging/                 # Logging abstraction
-│       └── Utilities/               # Helper functions (Size, etc.)
-├── samples/
-│   ├── SampleConsole/               # .NET 8 sample with async examples
-│   └── SampleNetFramework/          # .NET Framework 4.7.2 sample
-├── tests/
-│   └── MultiGpuHelper.Tests/        # Unit tests (xUnit)
-└── README.md
-```
-
-## Supported Platforms
-
-- **.NET Framework**: 4.6.1+
-- **.NET Core**: 2.1+
-- **.NET**: 6.0, 8.0+
-
-## GPU Support
-
-- **NVIDIA**: Full support via `nvidia-smi`
-- **AMD ROCm**: Future extensibility via `IGpuProbeProvider`
-- **Intel oneAPI**: Future extensibility via `IGpuProbeProvider`
-
-The library gracefully handles missing or non-functional GPU probes, returning an empty device list rather than crashing.
-
-## Error Handling
-
-All library boundaries throw meaningful custom exceptions with context:
-
-```csharp
-try
-{
-    await dispatcher.RunAsync(work, policy);
-}
-catch (GpuSelectionException ex)
-{
-    // No suitable device found
-}
-catch (GpuBudgetExceededException ex)
-{
-    // VRAM budget exceeded
-}
-catch (GpuProbeException ex)
-{
-    // GPU detection failed
-}
-```
-
-## Thread Safety
-
-- `GpuManager`: Fully thread-safe
-- `VramBudget`: Thread-safe atomic operations
-- `GpuDispatcher`: Safe for concurrent work dispatching
-- Device semaphores prevent over-subscription
-
-## Performance Considerations
-
-1. **Concurrency Limits**: Set `MaxConcurrentJobs` conservatively to avoid GPU saturation
-2. **VRAM Budgets**: Reserve headroom (typically 10-20% of total VRAM)
-3. **Device Refresh**: Call `manager.RefreshAsync()` periodically for accurate VRAM info
-4. **Selection Policy**: Use `MostFreeVram` for workloads with variable memory requirements
-
-## Testing
-
-Run the unit tests:
-
-```bash
-dotnet test tests/MultiGpuHelper.Tests/
-```
-
-Run the samples:
-
-```bash
-dotnet run --project samples/SampleConsole/
-dotnet run --project samples/SampleNetFramework/  # Requires .NET Framework SDK
-```
-
-Run hardware verification test with real GPUs:
-
-```bash
-dotnet run --project samples/HardwareTest/
-```
-
-## Packaging & CI
-
-### Building Locally
-
-Build the solution:
-
-```bash
-dotnet build -c Release
-```
-
-### NuGet Package
-
-The library is configured for automatic NuGet package generation.
-
-**Build and pack**:
-
-```bash
-dotnet pack src/MultiGpuHelper/MultiGpuHelper.csproj -c Release -o ./artifacts
-```
-
-**Package location**:
-
-- `.nupkg` (main package) → `artifacts/MultiGpuHelper.{version}.nupkg`
-- `.snupkg` (symbol package) → `artifacts/MultiGpuHelper.{version}.snupkg`
-
-**Local NuGet push** (for testing):
-
-```bash
-dotnet nuget push ./artifacts/MultiGpuHelper.1.0.0.nupkg -s <local-nuget-source>
-```
-
-### Strong-Name Signing
-
-The assembly is **strongly signed** with a 2048-bit RSA key:
-
-- Key file: `MultiGpuHelper.snk` (solution root)
-- Configured in: `src/MultiGpuHelper/MultiGpuHelper.csproj`
-- Property: `<SignAssembly>true</SignAssembly>`
-
-This enables the library to be used in full-trust .NET Framework applications.
-
-### CI/CD Pipeline
-
-Automated builds run on GitHub Actions (`.github/workflows/ci.yml`):
-
-**Triggers**:
-- Every push to `main` or `develop`
-- Every pull request to `main` or `develop`
-
-**Pipeline steps**:
-1. Checkout code
-2. Setup .NET 8.x SDK
-3. Restore dependencies
-4. Build (Release configuration)
-5. Run tests (if `tests/` exists)
-6. Pack NuGet package
-7. Upload artifacts (.nupkg + .snupkg)
-
-**Artifacts**: Available on GitHub Actions run page under "nuget-packages"
-
-### Versioning
-
-This project follows **Semantic Versioning (SemVer)**.
-
-See [VERSIONING.md](VERSIONING.md) for detailed versioning policy and release workflow.
-
-Current version: **1.0.0**
+Bug reports should include MultiGpuHelper version, OS, .NET version, GPU model, driver/runtime version, backend, a minimal reproduction, and the exception with stack trace. Use the [GitHub issue tracker](https://github.com/Vanderhell/MultiGpuHelper/issues).
 
 ## License
 
-This library is released under the **MIT License**. See [LICENSE](LICENSE) for details.
-
-## Contributing
-
-Contributions are welcome! Please ensure:
-
-1. Code follows existing style conventions (English comments throughout)
-2. New features include unit tests
-3. Breaking changes are avoided or clearly documented
-4. Documentation is updated
-
-## Future Enhancements
-
-- [ ] AMD ROCm probe provider
-- [ ] Intel oneAPI probe provider
-- [ ] OpenCL support
-- [ ] GPU memory profiling hooks
-- [ ] Work queue persistence
-- [ ] Multi-machine GPU clustering
-
-## Support
-
-For issues, questions, or suggestions, please open an issue on GitHub.
-
----
-
-**MultiGpuHelper** — Making multi-GPU scheduling simple and robust.
+MIT. See [LICENSE](https://github.com/Vanderhell/MultiGpuHelper/blob/main/LICENSE).

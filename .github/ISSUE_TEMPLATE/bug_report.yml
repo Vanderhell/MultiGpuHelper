@@ -1,0 +1,29 @@
+name: Bug report
+description: Report reproducible incorrect behavior
+title: "[Bug]: "
+body:
+  - type: input
+    id: version
+    attributes: { label: MultiGpuHelper version }
+    validations: { required: true }
+  - type: input
+    id: environment
+    attributes: { label: OS and .NET version }
+    validations: { required: true }
+  - type: input
+    id: hardware
+    attributes: { label: GPU and driver/runtime version }
+    validations: { required: true }
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Backend
+      options: [NvidiaSmi, CUDA, ROCm, WMI, Dispatcher/selection, Other]
+    validations: { required: true }
+  - type: textarea
+    id: reproduction
+    attributes: { label: Minimal reproduction }
+    validations: { required: true }
+  - type: textarea
+    id: exception
+    attributes: { label: Exception and stack trace, if any }

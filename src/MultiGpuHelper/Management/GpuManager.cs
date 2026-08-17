@@ -3,9 +3,12 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using MultiGpuHelper.Exceptions;
+using MultiGpuHelper.Abstractions;
+using MultiGpuHelper.Backends;
+using MultiGpuHelper.Enums;
 using MultiGpuHelper.Logging;
 using MultiGpuHelper.Models;
-using MultiGpuHelper.Probing;
+using MultiGpuHelper.Selection;
 
 namespace MultiGpuHelper.Management
 {
@@ -16,16 +19,17 @@ namespace MultiGpuHelper.Management
     public class GpuManager
     {
         private readonly Dictionary<int, GpuDevice> _devices;
-        private readonly IGpuProbeProvider _probeProvider;
+        private readonly IGpuBackend _backend;
         private readonly IGpuLogger _logger;
         private readonly object _lockObject = new object();
-        private int _roundRobinIndex = 0;
+        private readonly GpuSelectionEngine _selectionEngine;
 
-        public GpuManager(IGpuProbeProvider probeProvider = null, IGpuLogger logger = null)
+        public GpuManager(IGpuBackend backend = null, IGpuLogger logger = null)
         {
-            _probeProvider = probeProvider ?? new NvidiaSmiProbeProvider();
+            _backend = backend ?? new NvidiaBackend(logger);
             _logger = logger ?? new NoOpLogger();
             _devices = new Dictionary<int, GpuDevice>();
+            _selectionEngine = new GpuSelectionEngine(_logger);
         }
 
         /// <summary>
@@ -88,7 +92,7 @@ namespace MultiGpuHelper.Management
         {
             try
             {
-                var probed = await _probeProvider.ProbeAsync().ConfigureAwait(false);
+                var probed = await _backend.DetectDevicesAsync().ConfigureAwait(false);
                 lock (_lockObject)
                 {
                     foreach (var device in probed)
@@ -96,8 +100,10 @@ namespace MultiGpuHelper.Management
                         if (_devices.TryGetValue(device.DeviceId, out var existing))
                         {
                             // Update VRAM info only; preserve other settings
-                            existing.FreeVramBytes = device.FreeVramBytes;
-                            existing.TotalVramBytes = device.TotalVramBytes;
+                            existing.FreeVramBytes = device.MemoryInfo.State == GpuAvailabilityState.Available
+                                ? (long?)device.MemoryInfo.FreeBytes
+                                : null;
+                            existing.TotalVramBytes = device.MemoryInfo.TotalBytes;
                         }
                     }
                 }
@@ -116,37 +122,27 @@ namespace MultiGpuHelper.Management
         {
             lock (_lockObject)
             {
-                var enabledDevices = _devices.Values.Where(d => d.IsEnabled).ToList();
+                var snapshots = _devices.Values.Select(device => new GpuDeviceInfo(
+                    device.DeviceId,
+                    string.IsNullOrWhiteSpace(device.Name) ? $"GPU {device.DeviceId}" : device.Name,
+                    GpuBackendKind.Unknown,
+                    new GpuMemoryInfo(
+                        device.TotalVramBytes,
+                        device.FreeVramBytes ?? 0,
+                        device.FreeVramBytes.HasValue
+                            ? GpuAvailabilityState.Available
+                            : GpuAvailabilityState.Unavailable),
+                    device.IsEnabled
+                        ? GpuAvailabilityState.Available
+                        : GpuAvailabilityState.Unavailable,
+                    device.VramBudget?.LimitBytes ?? 0,
+                    device.MaxConcurrentJobs)).ToList();
 
-                if (enabledDevices.Count == 0)
-                    throw new GpuSelectionException("No enabled GPU devices available.");
+                var result = _selectionEngine.SelectDevice(snapshots, policy, specificDeviceId);
+                if (!result.IsSuccess)
+                    throw new GpuSelectionException(result.Reason);
 
-                switch (policy)
-                {
-                    case GpuPolicy.SpecificDevice:
-                        if (!specificDeviceId.HasValue)
-                            throw new GpuSelectionException("SpecificDevice policy requires a device ID.");
-
-                        var device = enabledDevices.FirstOrDefault(d => d.DeviceId == specificDeviceId.Value);
-                        if (device == null)
-                            throw new GpuSelectionException($"GPU device {specificDeviceId} not found or disabled.");
-
-                        return device;
-
-                    case GpuPolicy.MostFreeVram:
-                        var byFreeVram = enabledDevices
-                            .Where(d => d.FreeVramBytes.HasValue)
-                            .OrderByDescending(d => d.FreeVramBytes.Value)
-                            .FirstOrDefault();
-
-                        return byFreeVram ?? enabledDevices.First();
-
-                    case GpuPolicy.RoundRobin:
-                    default:
-                        var selected = enabledDevices[_roundRobinIndex % enabledDevices.Count];
-                        _roundRobinIndex++;
-                        return selected;
-                }
+                return _devices[result.SelectedDeviceId];
             }
         }
 
@@ -157,12 +153,28 @@ namespace MultiGpuHelper.Management
         {
             try
             {
-                var probed = await _probeProvider.ProbeAsync().ConfigureAwait(false);
+                var probed = await _backend.DetectDevicesAsync().ConfigureAwait(false);
                 lock (_lockObject)
                 {
                     foreach (var device in probed)
                     {
-                        _devices[device.DeviceId] = device;
+                        _devices[device.DeviceId] = new GpuDevice
+                        {
+                            DeviceId = device.DeviceId,
+                            Name = device.DeviceName,
+                            TotalVramBytes = device.MemoryInfo.TotalBytes,
+                            FreeVramBytes = device.MemoryInfo.State == GpuAvailabilityState.Available
+                                ? (long?)device.MemoryInfo.FreeBytes
+                                : null,
+                            IsEnabled = device.AvailabilityState == GpuAvailabilityState.Available,
+                            MaxConcurrentJobs = device.MaxConcurrentJobs,
+                            VramBudget = new VramBudget
+                            {
+                                LimitBytes = device.VramBudgetLimitBytes > 0
+                                    ? (long?)device.VramBudgetLimitBytes
+                                    : null
+                            }
+                        };
                     }
                 }
                 _logger.Info($"Initialized {probed.Count} GPU devices from probe");

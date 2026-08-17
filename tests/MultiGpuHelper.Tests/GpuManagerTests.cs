@@ -4,26 +4,27 @@ using System.Threading.Tasks;
 using Xunit;
 using MultiGpuHelper.Management;
 using MultiGpuHelper.Models;
-using MultiGpuHelper.Probing;
+using MultiGpuHelper.Abstractions;
+using MultiGpuHelper.Enums;
 using MultiGpuHelper.Logging;
 
 namespace MultiGpuHelper.Tests
 {
     public class GpuManagerTests
     {
-        private class MockProbeProvider : IGpuProbeProvider
+        private class MockBackend : IGpuBackend
         {
-            private readonly List<GpuDevice> _devices;
+            private readonly IReadOnlyList<GpuDeviceInfo> _devices;
 
-            public MockProbeProvider(List<GpuDevice>? devices = null)
+            public MockBackend(IReadOnlyList<GpuDeviceInfo>? devices = null)
             {
-                _devices = devices ?? new List<GpuDevice>();
+                _devices = devices ?? new List<GpuDeviceInfo>();
             }
 
-            public Task<IList<GpuDevice>> ProbeAsync()
-            {
-                return Task.FromResult<IList<GpuDevice>>(_devices);
-            }
+            public GpuBackendKind BackendKind => GpuBackendKind.Unknown;
+            public Task<IReadOnlyList<GpuDeviceInfo>> DetectDevicesAsync() => Task.FromResult(_devices);
+            public Task<IReadOnlyList<GpuDeviceInfo>> RefreshMemoryAsync(IReadOnlyList<GpuDeviceInfo> devices) => Task.FromResult(devices);
+            public Task<bool> IsAvailableAsync() => Task.FromResult(true);
         }
 
         [Fact]
@@ -43,13 +44,13 @@ namespace MultiGpuHelper.Tests
         }
 
         [Fact]
-        public void SelectDevice_MostFreeVram_SelectsHighestFreeMemory()
+        public void SelectDevice_MostFreeMemory_SelectsHighestFreeMemory()
         {
             var manager = new GpuManager();
             manager.AddDevice(new GpuDevice { DeviceId = 0, Name = "GPU0", TotalVramBytes = 1000, FreeVramBytes = 300 });
             manager.AddDevice(new GpuDevice { DeviceId = 1, Name = "GPU1", TotalVramBytes = 1000, FreeVramBytes = 800 });
 
-            var selected = manager.SelectDevice(GpuPolicy.MostFreeVram);
+            var selected = manager.SelectDevice(GpuPolicy.MostFreeMemory);
 
             Assert.Equal(1, selected.DeviceId);
         }
@@ -79,13 +80,13 @@ namespace MultiGpuHelper.Tests
         [Fact]
         public async Task InitializeFromProbeAsync_AddsProbeDevices()
         {
-            var devices = new List<GpuDevice>
+            var devices = new List<GpuDeviceInfo>
             {
-                new GpuDevice { DeviceId = 0, Name = "GPU0", TotalVramBytes = 1000 },
-                new GpuDevice { DeviceId = 1, Name = "GPU1", TotalVramBytes = 2000 }
+                new GpuDeviceInfo(0, "GPU0", GpuBackendKind.Unknown, new GpuMemoryInfo(1000, 500, GpuAvailabilityState.Available), GpuAvailabilityState.Available),
+                new GpuDeviceInfo(1, "GPU1", GpuBackendKind.Unknown, new GpuMemoryInfo(2000, 1000, GpuAvailabilityState.Available), GpuAvailabilityState.Available)
             };
 
-            var manager = new GpuManager(new MockProbeProvider(devices));
+            var manager = new GpuManager(new MockBackend(devices));
             await manager.InitializeFromProbeAsync();
 
             Assert.Equal(2, manager.Devices.Count);

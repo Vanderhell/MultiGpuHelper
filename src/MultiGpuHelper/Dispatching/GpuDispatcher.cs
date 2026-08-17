@@ -30,7 +30,7 @@ namespace MultiGpuHelper.Dispatching
         /// Run async work on a GPU.
         /// </summary>
         public async Task<T> RunAsync<T>(
-            Func<int, Task<T>> work,
+            Func<int, CancellationToken, Task<T>> work,
             GpuPolicy policy,
             GpuWorkItem workItem = null,
             CancellationToken ct = default)
@@ -50,57 +50,52 @@ namespace MultiGpuHelper.Dispatching
                 // Get semaphore for this device
                 var semaphore = GetDeviceSemaphore(device.DeviceId);
 
-                // Try to reserve VRAM budget
-                if (workItem.RequestedVramBytes > 0)
-                {
-                    if (!device.VramBudget.TryReserve(workItem.RequestedVramBytes))
-                    {
-                        throw new GpuBudgetExceededException(
-                            $"VRAM budget exceeded on device {device.DeviceId}. " +
-                            $"Requested: {workItem.RequestedVramBytes} bytes, " +
-                            $"Available: {device.VramBudget.LimitBytes - device.VramBudget.ReservedBytes} bytes");
-                    }
-                }
-
-                // Setup cancellation token
+                CancellationTokenSource timeoutSource = null;
                 CancellationToken workCt = ct;
                 if (workItem.TimeoutMs.HasValue && workItem.TimeoutMs.Value > 0)
                 {
-                    var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                    cts.CancelAfter(workItem.TimeoutMs.Value);
-                    workCt = cts.Token;
+                    timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    timeoutSource.CancelAfter(workItem.TimeoutMs.Value);
+                    workCt = timeoutSource.Token;
                 }
 
-                // Wait for semaphore slot
                 try
                 {
                     await semaphore.WaitAsync(workCt).ConfigureAwait(false);
                 }
-                catch (OperationCanceledException)
+                catch
                 {
-                    // Release VRAM if we couldn't acquire semaphore
-                    if (workItem.RequestedVramBytes > 0)
-                        device.VramBudget.Release(workItem.RequestedVramBytes);
-
+                    timeoutSource?.Dispose();
                     throw;
                 }
+                finally
+                {
+                    if (workCt.IsCancellationRequested && !ct.IsCancellationRequested)
+                        _logger.Warn($"Work '{workItem.Tag}' reached its timeout while waiting for a device slot.");
+                }
 
+                var reserved = false;
                 try
                 {
-                    // Execute work
+                    if (workItem.RequestedVramBytes > 0)
+                    {
+                        reserved = device.VramBudget.TryReserve(workItem.RequestedVramBytes);
+                        if (!reserved)
+                            throw new GpuBudgetExceededException(
+                                $"VRAM budget exceeded on device {device.DeviceId} for a request of {workItem.RequestedVramBytes} bytes.");
+                    }
+
                     _logger.Debug($"Executing work '{workItem.Tag}' on device {device.DeviceId}");
-                    var result = await work(device.DeviceId).ConfigureAwait(false);
+                    var result = await work(device.DeviceId, workCt).ConfigureAwait(false);
                     _logger.Debug($"Work '{workItem.Tag}' completed on device {device.DeviceId}");
                     return result;
                 }
                 finally
                 {
-                    // Release semaphore
                     semaphore.Release();
-
-                    // Release VRAM budget
-                    if (workItem.RequestedVramBytes > 0)
+                    if (reserved)
                         device.VramBudget.Release(workItem.RequestedVramBytes);
+                    timeoutSource?.Dispose();
                 }
             }
             catch (GpuSelectionException)
@@ -116,11 +111,18 @@ namespace MultiGpuHelper.Dispatching
                 _logger.Warn($"Work '{workItem.Tag}' was cancelled");
                 throw;
             }
-            catch (Exception ex)
-            {
-                _logger.Error($"Error executing work '{workItem.Tag}': {ex.Message}");
-                throw new GpuSelectionException($"Failed to execute work on GPU: {ex.Message}", ex);
-            }
+        }
+
+        public Task<T> RunAsync<T>(
+            Func<int, Task<T>> work,
+            GpuPolicy policy,
+            GpuWorkItem workItem = null,
+            CancellationToken ct = default)
+        {
+            if (work == null)
+                throw new ArgumentNullException(nameof(work));
+
+            return RunAsync((deviceId, _) => work(deviceId), policy, workItem, ct);
         }
 
         /// <summary>
@@ -133,8 +135,9 @@ namespace MultiGpuHelper.Dispatching
             CancellationToken ct = default)
         {
             await RunAsync(
-                async deviceId =>
+                async (deviceId, cancellationToken) =>
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     await work(deviceId).ConfigureAwait(false);
                     return true;
                 },

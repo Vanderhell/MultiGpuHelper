@@ -6,77 +6,63 @@ using Xunit;
 using MultiGpuHelper.Backends;
 using MultiGpuHelper.Enums;
 using MultiGpuHelper.Logging;
+using MultiGpuHelper.Models;
 
 namespace MultiGpuHelper.Tests
 {
-    /// <summary>
-    /// Tests for the obsolete DxgiBackend wrapper.
-    /// DxgiBackend was renamed to WmiBackend in the truthfulness cleanup (EXEC_MGH_1_1_0_15).
-    /// These tests verify that the obsolete wrapper still works for backward compatibility.
-    /// </summary>
-    public class DxgiBackendTests
+    public class CudaBackendTests
     {
-        private readonly DxgiBackend _backend;
+        private readonly CudaBackend _backend;
 
-        public DxgiBackendTests()
+        public CudaBackendTests()
         {
-#pragma warning disable CS0618 // Type is obsolete
-            _backend = new DxgiBackend(new NoOpLogger());
-#pragma warning restore CS0618
+            _backend = new CudaBackend(new NoOpLogger());
         }
 
         [Fact]
         public void BackendKind_ReturnsNvidia()
         {
-            // Obsolete wrapper delegates to WmiBackend
-#pragma warning disable CS0618
-            Assert.Equal(MultiGpuHelper.Enums.GpuBackendKind.NVIDIA, _backend.BackendKind);
-#pragma warning restore CS0618
+            // CUDA is NVIDIA-only
+            Assert.Equal(GpuBackendKind.Cuda, _backend.BackendKind);
         }
 
         [Fact]
         public async Task IsAvailableAsync_ReturnsBool()
         {
-            // Should return bool without exception
-#pragma warning disable CS0618
+            // Should always return bool without exception
             var available = await _backend.IsAvailableAsync();
-#pragma warning restore CS0618
             Assert.IsType<bool>(available);
         }
 
         [Fact]
         public async Task DetectDevicesAsync_ReturnsReadOnlyList()
         {
-#pragma warning disable CS0618
             var devices = await _backend.DetectDevicesAsync();
-#pragma warning restore CS0618
 
             Assert.NotNull(devices);
-            Assert.IsAssignableFrom<IReadOnlyList<MultiGpuHelper.Models.GpuDeviceInfo>>(devices);
+            Assert.IsAssignableFrom<IReadOnlyList<GpuDeviceInfo>>(devices);
         }
 
         [Fact]
-        public async Task DetectDevicesAsync_NoDevices_ReturnsEmptyList()
+        public async Task DetectDevicesAsync_UnavailablePath_ReturnsEmptyList()
         {
-            // If no GPUs available, returns empty (not null)
-#pragma warning disable CS0618
+            // If CUDA is unavailable, should return empty list (not throw)
             var devices = await _backend.DetectDevicesAsync();
-#pragma warning restore CS0618
 
             Assert.NotNull(devices);
-            Assert.IsType<List<MultiGpuHelper.Models.GpuDeviceInfo>>(devices);
+            Assert.IsType<List<GpuDeviceInfo>>(devices);
+            // Note: If CUDA is unavailable on this machine, this will be empty
+            // If CUDA is available, this will contain detected devices
         }
 
         [Fact]
-        public async Task DetectDevicesAsync_DevicesHaveRequiredFields()
+        public async Task DetectDevicesAsync_IfDevicesFound_HaveRequiredFields()
         {
-#pragma warning disable CS0618
             var devices = await _backend.DetectDevicesAsync();
-#pragma warning restore CS0618
 
             if (devices.Count > 0)
             {
-                // If any devices detected, verify all required fields are populated
+                // If devices detected, verify all required fields are populated
                 foreach (var device in devices)
                 {
                     Assert.NotNull(device);
@@ -91,36 +77,18 @@ namespace MultiGpuHelper.Tests
                         device.MemoryInfo.State == GpuAvailabilityState.Unavailable ||
                         device.MemoryInfo.State == GpuAvailabilityState.Error,
                         "Memory state must be valid");
+                Assert.Equal(GpuBackendKind.Cuda, device.Backend);
+                Assert.Equal(GpuVendor.Nvidia, device.Vendor);
                 }
-            }
-        }
-
-        [Fact]
-        public async Task DetectDevicesAsync_ReturnsOrderedByDeviceId()
-        {
-#pragma warning disable CS0618
-            var devices = await _backend.DetectDevicesAsync();
-#pragma warning restore CS0618
-
-            if (devices.Count > 1)
-            {
-                // Devices should be ordered by ID for deterministic results
-                var orderedByIdDescending = devices.Select(d => d.DeviceId).OrderByDescending(id => id);
-                var actualDescending = devices.Select(d => d.DeviceId);
-
-                // Check that devices are ordered (not randomly shuffled)
-                Assert.Equal(orderedByIdDescending, actualDescending.OrderByDescending(id => id));
             }
         }
 
         [Fact]
         public async Task RefreshMemoryAsync_WithEmptyList_ReturnsEmptyList()
         {
-            var devices = new List<MultiGpuHelper.Models.GpuDeviceInfo>();
+            var devices = new List<GpuDeviceInfo>();
 
-#pragma warning disable CS0618
             var refreshed = await _backend.RefreshMemoryAsync(devices);
-#pragma warning restore CS0618
 
             Assert.NotNull(refreshed);
             Assert.Empty(refreshed);
@@ -130,16 +98,12 @@ namespace MultiGpuHelper.Tests
         public async Task RefreshMemoryAsync_WithDeviceList_ReturnsUpdatedList()
         {
             // First detect devices
-#pragma warning disable CS0618
             var originalDevices = await _backend.DetectDevicesAsync();
-#pragma warning restore CS0618
 
             if (originalDevices.Count > 0)
             {
                 // Refresh should return updated list
-#pragma warning disable CS0618
                 var refreshed = await _backend.RefreshMemoryAsync(originalDevices);
-#pragma warning restore CS0618
 
                 Assert.NotNull(refreshed);
                 Assert.Equal(originalDevices.Count, refreshed.Count);
@@ -152,6 +116,53 @@ namespace MultiGpuHelper.Tests
                     Assert.Equal(original.DeviceId, updated.DeviceId);
                     Assert.Equal(original.DeviceName, updated.DeviceName);
                 }
+            }
+        }
+
+        [Fact]
+        public async Task DetectDevicesAsync_IfAvailable_ReturnsDeterministicResult()
+        {
+            // Multiple calls should return the same result (deterministic)
+            var first = await _backend.DetectDevicesAsync();
+            var second = await _backend.DetectDevicesAsync();
+
+            Assert.Equal(first.Count, second.Count);
+
+            for (int i = 0; i < first.Count; i++)
+            {
+                Assert.Equal(first[i].DeviceId, second[i].DeviceId);
+                Assert.Equal(first[i].DeviceName, second[i].DeviceName);
+                Assert.Equal(first[i].MemoryInfo.TotalBytes, second[i].MemoryInfo.TotalBytes);
+            }
+        }
+
+        [Fact]
+        public async Task CudaBackend_IsOptionalAndDoesNotAffectDefaultBehavior()
+        {
+            // Creating CudaBackend should not affect other backends or default behavior
+            var devices = await _backend.DetectDevicesAsync();
+
+            // Should not throw and should return a valid list (possibly empty if CUDA unavailable)
+            Assert.NotNull(devices);
+        }
+
+        [Fact]
+        public async Task CudaBackend_GracefullyHandlesUnavailability()
+        {
+            // If CUDA is unavailable, DetectDevicesAsync should return empty list
+            // not throw an exception
+            var devices = await _backend.DetectDevicesAsync();
+            var available = await _backend.IsAvailableAsync();
+
+            if (!available)
+            {
+                // CUDA unavailable: should return empty
+                Assert.Empty(devices);
+            }
+            else
+            {
+                // CUDA available: may have devices or empty (both acceptable)
+                Assert.NotNull(devices);
             }
         }
     }

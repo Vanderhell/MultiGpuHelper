@@ -28,18 +28,15 @@ Thumbs.db
 Desktop.ini
 .DS_Store
 
-# Claude / AI scratch (DO NOT TRACK)
+# Local scratch files
 .claude/
 .cladue/
 .ai/
-*.prompt
-*.prompt.md
 
 # NuGet
 .nuget/
 *.nupkg
-!MultiGpuHelper.1.0.0.nupkg
-!MultiGpuHelper.1.0.0.snupkg
+*.snupkg
 
 # Misc temp files
 *.tmp
@@ -48,5 +45,5 @@ Desktop.ini
 .swp
 .swo
 
-# Keep strong-name key (TRACKED)
-# *.snk is tracked intentionally
+*.snk
+.tmp/

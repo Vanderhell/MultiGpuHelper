@@ -37,9 +37,9 @@ class Program
             Console.WriteLine($"  RoundRobin selection {i}: Device {device.DeviceId}");
         }
 
-        // Select device using MostFreeVram policy
-        var mostFreeDevice = manager.SelectDevice(GpuPolicy.MostFreeVram);
-        Console.WriteLine($"  MostFreeVram selection: Device {mostFreeDevice.DeviceId}");
+        // Select device using MostFreeMemory policy
+        var mostFreeDevice = manager.SelectDevice(GpuPolicy.MostFreeMemory);
+        Console.WriteLine($"  MostFreeMemory selection: Device {mostFreeDevice.DeviceId}");
 
         // Select specific device
         var specificDevice = manager.SelectDevice(GpuPolicy.SpecificDevice, 1);
